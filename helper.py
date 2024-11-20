@@ -73,7 +73,7 @@ def create_rag_chain(groq_api_key, user_query, VECTOR_STORE_DB_NAME):
     embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-mpnet-base-v2", model_kwargs={'device': 'cpu'}, encode_kwargs={'normalize_embeddings': False})
     vector_store = FAISS.load_local(VECTOR_STORE_DB_NAME, embeddings, allow_dangerous_deserialization=True)
     retriver = vector_store.as_retriever(search_type="mmr", search_kwargs={"k": 5})
-    llm = ChatGroq(groq_api_key=groq_api_key, model_name="llama-3.2-90b-text-preview")
+    llm = ChatGroq(groq_api_key=groq_api_key, model_name="llama-3.2-90b-vision-preview")
     system_prompt = (
         "You are an assistant for question-answering tasks. "
         "Use the following pieces of retrieved context to answer "
