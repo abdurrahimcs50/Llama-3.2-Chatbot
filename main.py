@@ -190,6 +190,7 @@ def process_data(n_clicks, filenames):
     Output('chat-response', 'children'),
     [Input('submit-query', 'n_clicks')],
     [State('user-query', 'value')]
+    
 )
 def chat_with_uploaded_data(n_clicks, user_input):
     if n_clicks and user_input:

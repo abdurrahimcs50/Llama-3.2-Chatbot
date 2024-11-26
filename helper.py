@@ -92,7 +92,20 @@ def create_rag_chain(groq_api_key, user_query, VECTOR_STORE_DB_NAME):
     rag_chain = create_retrieval_chain(retriver, question_answer_chain)
     response = rag_chain.invoke({"input": user_query})
     print(response["answer"])
-    return response
+    answer = response["answer"]
+    # Extract metadata from the response
+    context = response.get("context", [])
+    # print(context)
+    # Check if context is available
+    # Append metadata to the answer
+    metadata_info = []
+    for doc in context:
+        filename = doc.metadata.get("source", "Unknown file")
+        page_number = doc.metadata.get("page", "Unknown page")
+        metadata_info.append(f"{filename}, page {page_number}")
+    # add results with answer and metadata info  
+    answer+= f"\n\n({metadata_info})"
+    return answer
 
 # def main():
 #     image_text = extract_text_from_image('F:\\DevWorkSpace\\WSP-2024\\Mohammad\\data\\img2.png')
