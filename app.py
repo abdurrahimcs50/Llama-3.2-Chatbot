@@ -1,5 +1,6 @@
 import dash
 from dash import dcc, html, Input, Output, State
+import dash_bootstrap_components as dbc
 import time
 import base64
 import io
@@ -12,6 +13,10 @@ import PyPDF2
 from helper import extract_text_from_image, load_pdf_documents, split_text_img_documents, split_text_documents, create_vector_store, load_and_search_vector_store, create_rag_chain
 
 from decouple import config
+import os
+import tempfile
+from werkzeug.utils import secure_filename
+import base64
 
 GROQ_API_KEY = config('GROQ_API_KEY')
 print(GROQ_API_KEY)
@@ -22,8 +27,13 @@ VECTOR_STORE_DB_NAME = "My_Test_App_Data"
 # Initialize Flask server
 server = Flask(__name__)
 
+# Configure file upload folder
+UPLOAD_FOLDER = os.path.join(tempfile.gettempdir(), 'uploads')
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+server.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
+
 # Initialize Dash app with Flask server
-app = dash.Dash(__name__, server=server, suppress_callback_exceptions=True)
+app = dash.Dash(__name__, server=server, suppress_callback_exceptions=True, url_base_pathname='/', external_stylesheets=[dbc.themes.BOOTSTRAP])
 app.title = "ChatBotApp"
 
 # Custom CSS styles for better UI
@@ -225,46 +235,7 @@ app.layout = html.Div(
 )
 
 # File Processing: Handle file uploads
-def process_uploaded_files(contents):
-    file_info = []
-    
-    for content in contents:
-        content_type, content_string = content.split(",")
-        decoded = base64.b64decode(content_string)
 
-        # Check if it's a PDF file
-        if "pdf" in content_type:
-            try:
-                pdf_file = io.BytesIO(decoded)
-                pdf_reader = PyPDF2.PdfReader(pdf_file)
-                pdf_text = ""
-                for page in pdf_reader.pages:
-                    pdf_text += page.extract_text()
-                file_info.append(f"PDF File Text Extracted: {pdf_text[:300]}...")  # Display first 300 chars
-            except Exception as e:
-                file_info.append(f"Error processing PDF: {str(e)}")
-
-        # Check if it's an image file
-        elif "image" in content_type:
-            try:
-                image = Image.open(io.BytesIO(decoded))
-                file_info.append(f"Image File: {image.format} (Size: {image.size})")
-            except Exception as e:
-                file_info.append(f"Error processing image: {str(e)}")
-
-        # Check if it's a ZIP file
-        elif "zip" in content_type:
-            try:
-                with zipfile.ZipFile(io.BytesIO(decoded), 'r') as zip_ref:
-                    zip_info = zip_ref.namelist()
-                    file_info.append(f"ZIP File contains: {zip_info}")
-            except Exception as e:
-                file_info.append(f"Error processing ZIP: {str(e)}")
-    
-    return file_info
-
-
-# Callback to handle file uploads and display file info
 @app.callback(
     [Output("upload-status", "children"),
      Output("uploaded-files-list", "children")],
@@ -273,10 +244,86 @@ def process_uploaded_files(contents):
 )
 def handle_file_upload(contents, filenames):
     if contents is not None:
-        # Process the files and extract information
-        file_info = process_uploaded_files(contents)
-        return "Files uploaded successfully!", html.Ul([html.Li(info) for info in file_info])
-    return "", ""
+        messages = []
+        for content, name in zip(contents, filenames):
+            try:
+                # Save uploaded file
+                filename = secure_filename(name)
+                file_path = os.path.join(server.config['UPLOAD_FOLDER'], filename)
+
+                # Decode base64 file content
+                content_type, content_string = content.split(',')
+                content_decoded = base64.b64decode(content_string)
+                with open(file_path, "wb") as f:
+                    f.write(content_decoded)
+                    
+                # Debug: Check the file size and path before processing
+                if os.path.exists(file_path):
+                    messages.append(f"ZIP file {filename} found at {file_path} with size {os.path.getsize(file_path)} bytes.")
+                else:
+                    messages.append(f"ZIP file {filename} not found at {file_path}.")
+
+                # File-specific processing
+                if filename.endswith(".pdf"):
+                    print(file_path, "This is File Path")
+                    print('#'*20)
+                    # load_pdf_documents,
+                    
+                    load_pdf = load_pdf_documents(file_path)
+                    print(load_pdf, "This is Load PDF")
+                    print('#'*20)
+                    # with open(file_path, "rb") as f:
+                    #     pdf_reader = PyPDF2.PdfReader(f)
+                    #     pdf_text = " ".join([page.extract_text() for page in pdf_reader.pages])
+                    messages.append(f"Extracted text from {filename}.")
+                
+                elif filename.endswith((".png", ".jpg", ".jpeg")):
+                    image = Image.open(file_path)
+                    extracted_text = extract_text_from_image(image)
+                    messages.append(f"Extracted text from image {filename}.")
+                
+                elif filename.endswith(".zip"):
+                    try:
+                        with zipfile.ZipFile(file_path, 'r') as zip_ref:
+                            zip_ref.testzip()  # Test the ZIP file for any errors before extracting
+                            extracted_folder_path = os.path.join(server.config['UPLOAD_FOLDER'], "extracted")
+                            os.makedirs(extracted_folder_path, exist_ok=True)
+                            zip_ref.extractall(extracted_folder_path)
+
+                            for root, dirs, files in os.walk(extracted_folder_path):
+                                for file in files:
+                                    if file == ".DS_Store":
+                                        continue
+
+                                    file_path = os.path.join(root, file)
+                                    try:
+                                        if file.endswith(".pdf"):
+                                            pdf_text = load_pdf_documents(file_path)
+                                            print(pdf_text, "This is PDF Text")
+                                            print('#'*20)
+                                            messages.append(f"Extracted text from PDF: {file_path}")
+                                        elif file.endswith((".png", ".jpg", ".jpeg")):
+                                            image = Image.open(file_path)
+                                            extracted_text = extract_text_from_image(image)
+                                            messages.append(f"Extracted text from image: {file_path}")
+                                        else:
+                                            messages.append(f"File type {file.split('.')[-1].upper()} not processed: {file_path}")
+                                    except Exception as e:
+                                        messages.append(f"Error while processing file {file_path}: {str(e)}")
+                                        
+                    except zipfile.BadZipFile:
+                        messages.append(f"Failed to unzip {filename}: The file is not a valid ZIP archive.")
+                    except Exception as e:
+                        messages.append(f"Error while processing {filename}: {str(e)}")
+
+                else:
+                    messages.append(f"Uploaded {filename}, but it is not a ZIP file.")
+            except Exception as e:
+                messages.append(f"Failed to upload {name}: {str(e)}")
+                
+        return "File processing complete!", html.Ul([html.Li(msg) for msg in messages])
+
+    return "Please upload files."
 
 
 # Callback to handle chat updates
