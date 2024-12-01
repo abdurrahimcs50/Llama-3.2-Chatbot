@@ -18,6 +18,8 @@ import tempfile
 from werkzeug.utils import secure_filename
 import base64
 
+from langchain_core.documents import Document
+
 GROQ_API_KEY = config('GROQ_API_KEY')
 print(GROQ_API_KEY)
 
@@ -259,28 +261,58 @@ def handle_file_upload(contents, filenames):
                     
                 # Debug: Check the file size and path before processing
                 if os.path.exists(file_path):
-                    messages.append(f"ZIP file {filename} found at {file_path} with size {os.path.getsize(file_path)} bytes.")
+                    messages.append(f"{filename} found at {file_path} with size {os.path.getsize(file_path)} bytes.")
                 else:
-                    messages.append(f"ZIP file {filename} not found at {file_path}.")
+                    messages.append(f"{filename} not found at {file_path}.")
 
                 # File-specific processing
                 if filename.endswith(".pdf"):
                     print(file_path, "This is File Path")
                     print('#'*20)
                     # load_pdf_documents,
-                    
-                    load_pdf = load_pdf_documents(file_path)
-                    print(load_pdf, "This is Load PDF")
-                    print('#'*20)
+                    documents = []
+                    pdf_docs = load_pdf_documents(file_path)
+                    documents.extend(pdf_docs)
+                    # Split and store documents in vector DB
+                    try:
+                        splits = split_text_documents(documents)
+                        print(splits, len(splits))
+                        vector_store = create_vector_store(splits)
+                        print(vector_store)
+                        if 'Local db created':
+                            # Display success message
+                            success = True
+                            messages.append(f"File {filename} uploaded and processed successfully.")
+                        else:
+                            success = False
+                            messages.append(f"Error storing documents: {str(e)}")
+                    except Exception as e:
+                        return f"Error storing documents: {str(e)}"
                     # with open(file_path, "rb") as f:
                     #     pdf_reader = PyPDF2.PdfReader(f)
                     #     pdf_text = " ".join([page.extract_text() for page in pdf_reader.pages])
-                    messages.append(f"Extracted text from {filename}.")
                 
                 elif filename.endswith((".png", ".jpg", ".jpeg")):
-                    image = Image.open(file_path)
-                    extracted_text = extract_text_from_image(image)
-                    messages.append(f"Extracted text from image {filename}.")
+                    # Try to extract text from the image
+                    text = extract_text_from_image(file_path)
+                    
+                    my_doc = Document(page_content=text, metadata={"source": name})
+                    print(type(my_doc))
+                    # Split and store documents in vector DB
+                    try:
+                        splits = split_text_img_documents(my_doc)
+                        print(splits, len(splits))
+                        vector_store = create_vector_store(splits)
+                        print(vector_store)
+                        if 'Local db created':
+                            success = True
+                            # Display success message
+                            messages.append(f"File {filename} uploaded and processed successfully.")
+                        else:
+                            success = False
+                            messages.append(f"Error storing documents: {str(e)}")
+                    except Exception as e:
+                        return f"Error storing documents: {str(e)}"
                 
                 elif filename.endswith(".zip"):
                     try:
@@ -298,18 +330,52 @@ def handle_file_upload(contents, filenames):
                                     file_path = os.path.join(root, file)
                                     try:
                                         if file.endswith(".pdf"):
-                                            pdf_text = load_pdf_documents(file_path)
-                                            print(pdf_text, "This is PDF Text")
-                                            print('#'*20)
-                                            messages.append(f"Extracted text from PDF: {file_path}")
+                                            # load_pdf_documents,
+                                            documents = []
+                                            pdf_docs = load_pdf_documents(file_path)
+                                            documents.extend(pdf_docs)
+                                            # Split and store documents in vector DB
+                                            try:
+                                                splits = split_text_documents(documents)
+                                                print(splits, len(splits))
+                                                vector_store = create_vector_store(splits)
+                                                print(vector_store)
+                                                if 'Local db created':
+                                                    # Display success message
+                                                    success = True
+                                                    messages.append(f"File {filename} uploaded and processed successfully.")
+                                                else:
+                                                    success = False
+                                                    messages.append(f"Error storing documents: {str(e)}")
+                                            except Exception as e:
+                                                return f"Error storing documents: {str(e)}"
                                         elif file.endswith((".png", ".jpg", ".jpeg")):
-                                            image = Image.open(file_path)
-                                            extracted_text = extract_text_from_image(image)
-                                            messages.append(f"Extracted text from image: {file_path}")
+                                            
+                                            # Try to extract text from the image
+                                            text = extract_text_from_image(file_path)
+                                            
+                                            my_doc = Document(page_content=text, metadata={"source": name})
+                                            print(type(my_doc))
+                                            # Split and store documents in vector DB
+                                            try:
+                                                splits = split_text_img_documents(my_doc)
+                                                print(splits, len(splits))
+                                                vector_store = create_vector_store(splits)
+                                                print(vector_store)
+                                                if 'Local db created':
+                                                    # Display success message
+                                                    success = True
+                                                    messages.append(f"File {filename} uploaded and processed successfully.")
+                                                else:
+                                                    success = False
+                                                    messages.append(f"Error storing documents: {str(e)}")
+                                            except Exception as e:
+                                                messages.append(f"Error storing documents: {str(e)}")
+                                                return f"Error storing documents: {str(e)}"
                                         else:
-                                            messages.append(f"File type {file.split('.')[-1].upper()} not processed: {file_path}")
+                                            messages.append(f"Unsupported file type: {file_path}")
                                     except Exception as e:
-                                        messages.append(f"Error while processing file {file_path}: {str(e)}")
+                                        messages.append(f"Error processing {file_path}: {str(e)}")
                                         
                     except zipfile.BadZipFile:
                         messages.append(f"Failed to unzip {filename}: The file is not a valid ZIP archive.")
@@ -321,7 +387,11 @@ def handle_file_upload(contents, filenames):
             except Exception as e:
                 messages.append(f"Failed to upload {name}: {str(e)}")
                 
-        return "File processing complete!", html.Ul([html.Li(msg) for msg in messages])
+        # Display appropriate status message
+        if success:
+            return "File processing completed successfully!", html.Ul([html.Li(msg) for msg in messages])
+        else:
+            return "File processing completed with some errors.", html.Ul([html.Li(msg) for msg in messages])
 
     return "Please upload files."
 
